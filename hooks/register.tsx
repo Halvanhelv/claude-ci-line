@@ -7,17 +7,18 @@ import type { Tone } from './layout'
 
 const TICK_MS = 15_000
 const IDLE_MS = 120_000
+const HOT_MS = 180_000
 
 const ci = atom({ plugin: 'ci-line', key: 'ci' } as const, null)
 const isExpanded = atom({ plugin: 'ci-line', key: 'isExpanded' } as const, false)
 
 type GhRun = {
-  databaseId: number
-  workflowName: string
+  id: number
+  name: string
   status: string
   conclusion: string | null
-  headSha: string
-  createdAt: string
+  run_attempt: number
+  created_at: string
 }
 type GhJob = { name: string; status: string; conclusion: string | null }
 type GhCheck = GhJob & { app: { slug: string } | null }
@@ -29,66 +30,71 @@ const DIM: Tone[] = ['skip', 'stop', 'dim']
 let isFetching = false
 let isActive = false
 let fetchedAt = 0
+let hotUntil = 0
 let lastKey = ''
 let lastJson = ''
-const doneJobs = new Map<number, Job[]>()
+const doneJobs = new Map<string, Job[]>()
 
-const gh = async <T,>($: EngineInterface, argv: string[]): Promise<T | undefined> => {
+// Throws when gh fails, so a failed read keeps the line as it was instead of drawing it green.
+const gh = async <T,>($: EngineInterface, argv: string[]): Promise<T> => {
   const ran = await $.process.run(['gh', ...argv])
+  if (ran.exitCode !== 0) throw new Error(ran.stderr)
 
-  return ran.exitCode === 0 ? (JSON.parse(ran.stdout) as T) : undefined
+  return JSON.parse(ran.stdout) as T
 }
 
 const jobsOf = async ($: EngineInterface, run: GhRun): Promise<Job[]> => {
-  const kept = doneJobs.get(run.databaseId)
+  const attempt = `${run.id}:${run.run_attempt}`
+  const kept = doneJobs.get(attempt)
   if (kept !== undefined) return kept
 
-  const view = await gh<{ jobs: GhJob[] }>($, ['run', 'view', String(run.databaseId), '--json', 'jobs'])
-  const jobs = (view?.jobs ?? []).map(job => ({ name: job.name, state: toState(job.status, job.conclusion) }))
-  if (view !== undefined && run.status === 'completed') doneJobs.set(run.databaseId, jobs)
+  const view = await gh<{ jobs: GhJob[] }>($, ['run', 'view', String(run.id), '--json', 'jobs'])
+  const jobs = view.jobs.map(job => ({ name: job.name, state: toState(job.status, job.conclusion) }))
+  if (run.status === 'completed') doneJobs.set(attempt, jobs)
 
   return jobs
 }
 
-// What reports on the commit outside Actions: other apps' check runs and commit statuses.
-const outsideOf = async ($: EngineInterface, sha: string): Promise<Run[]> => {
-  const [checks, combined] = await Promise.all([
-    gh<{ check_runs: GhCheck[] }>($, ['api', `repos/{owner}/{repo}/commits/${sha}/check-runs?per_page=100`]),
-    gh<{ statuses: GhStatus[] }>($, ['api', `repos/{owner}/{repo}/commits/${sha}/status?per_page=100`]),
+// Everything that reports on one commit: its workflow runs, whatever branch or event
+// started them, then other apps' check runs and commit statuses.
+const runsOf = async ($: EngineInterface, sha: string): Promise<Run[]> => {
+  const commit = `repos/{owner}/{repo}/commits/${sha}`
+  const [actions, checks, combined] = await Promise.all([
+    gh<{ workflow_runs: GhRun[] }>($, ['api', `repos/{owner}/{repo}/actions/runs?head_sha=${sha}&per_page=100`]),
+    gh<{ check_runs: GhCheck[] }>($, ['api', `${commit}/check-runs?per_page=100`]),
+    gh<{ statuses: GhStatus[] }>($, ['api', `${commit}/status?per_page=100`]),
   ])
-  const foreign = (checks?.check_runs ?? []).filter(check => check.app?.slug !== 'github-actions')
-
-  return [
-    ...foreign.map(check => ({ id: 0, name: check.name, state: toState(check.status, check.conclusion), jobs: [] })),
-    ...(combined?.statuses ?? []).map(one => ({ id: 0, name: one.context, state: statusState(one.state), jobs: [] })),
-  ]
-}
-
-const load = async ($: EngineInterface, head: string, branch: string): Promise<Ci | null> => {
-  const all = await gh<GhRun[]>($, [
-    'run', 'list', '--branch', branch, '--limit', '20',
-    '--json', 'databaseId,workflowName,status,conclusion,headSha,createdAt',
-  ])
-  const newest = all?.[0]
-  if (all === undefined || newest === undefined) return null
-
-  const sha = all.some(run => run.headSha === head) ? head : newest.headSha
   const latest = new Map<string, GhRun>()
-  for (const run of all) {
-    if (run.headSha === sha && !latest.has(run.workflowName)) latest.set(run.workflowName, run)
+  for (const run of actions.workflow_runs) {
+    if (!latest.has(run.name)) latest.set(run.name, run)
   }
-  const picked = [...latest.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-  const [outside, ...runs] = await Promise.all([
-    outsideOf($, sha),
-    ...picked.map(async run => ({
-      id: run.databaseId,
-      name: run.workflowName.replace(/^\d+\.\s*/, ''),
+  const picked = [...latest.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))
+  const workflows = await Promise.all(
+    picked.map(async run => ({
+      id: run.id,
+      name: run.name.replace(/^\d+\.\s*/, ''),
       state: toState(run.status, run.conclusion),
       jobs: await jobsOf($, run),
     })),
-  ])
+  )
+  const foreign = checks.check_runs.filter(check => check.app?.slug !== 'github-actions')
 
-  return { sha, isHead: sha === head, runs: [...runs, ...outside] }
+  return [
+    ...workflows,
+    ...foreign.map(check => ({ id: 0, name: check.name, state: toState(check.status, check.conclusion), jobs: [] })),
+    ...combined.statuses.map(one => ({ id: 0, name: one.context, state: statusState(one.state), jobs: [] })),
+  ]
+}
+
+// HEAD's CI when it has any; otherwise the last pushed commit's, marked as not HEAD.
+const load = async ($: EngineInterface, head: string, pushed: string): Promise<Ci | null> => {
+  const own = await runsOf($, head)
+  if (own.length > 0) return { sha: head, isHead: true, runs: own }
+  if (pushed === '' || pushed === head) return null
+
+  const runs = await runsOf($, pushed)
+
+  return runs.length > 0 ? { sha: pushed, isHead: false, runs } : null
 }
 
 const refresh = async ($: EngineInterface, isForced = false) => {
@@ -97,15 +103,20 @@ const refresh = async ($: EngineInterface, isForced = false) => {
   try {
     const git = await $.process.run(['git', 'rev-parse', 'HEAD', '--abbrev-ref', 'HEAD'])
     const [head = '', branch = ''] = git.stdout.trim().split('\n')
-    const key = git.exitCode === 0 && branch !== 'HEAD' ? `${branch}@${head}` : ''
+    const upstream = await $.process.run(['git', 'rev-parse', '--verify', '-q', '@{u}'])
+    const pushed = upstream.exitCode === 0 ? upstream.stdout.trim() : ''
+    const key = git.exitCode === 0 && branch !== 'HEAD' ? `${branch}@${head}@${pushed}` : ''
     const now = await $.clock.now()
-    const isDue = isForced || key !== lastKey || isActive || now - fetchedAt >= IDLE_MS
+    // A new commit or push: its runs take a while to appear, so keep polling fast for them.
+    if (key !== lastKey) hotUntil = now + HOT_MS
+    const isDue = isForced || key !== lastKey || isActive || now < hotUntil || now - fetchedAt >= IDLE_MS
     if (!isDue) return
 
-    const next = key === '' ? null : await load($, head, branch)
     lastKey = key
     fetchedAt = now
+    const next = key === '' ? null : await load($, head, pushed)
     isActive = next?.runs.some(run => run.id !== 0 && (run.state === 'run' || run.state === 'wait')) ?? false
+    if (next?.isHead === true && next.runs.some(run => run.id !== 0)) hotUntil = 0
 
     const json = JSON.stringify(next)
     if (json !== lastJson) {
@@ -113,7 +124,7 @@ const refresh = async ($: EngineInterface, isForced = false) => {
       await update($, ci, () => next)
     }
   } catch {
-    // gh missing, offline, not a repo: keep what is shown and try again next tick.
+    // gh missing, offline, not a GitHub repo: keep what is shown and try again later.
   } finally {
     isFetching = false
   }
@@ -141,7 +152,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const ran = await next(e)
     if (/\bgit\s+push\b|\bgh\s+(pr|run|workflow)\b/.test(e.command)) {
-      isActive = true
+      hotUntil = (await $.clock.now()) + HOT_MS
       $.clock.after(5_000, () => void refresh($, true))
     }
 
@@ -156,10 +167,11 @@ export const register: Register = on => {
 
     const isOpen = await read($, isExpanded)
     const { Box, Button, Text } = $.ui.resolve(e)
+    const columns = (e.props.bodyColumns ?? e.viewport?.columns ?? 200) - 3
 
     return (
       <Box flexDirection="column">
-        {layout(state, isOpen).map((row, at) => (
+        {layout(state, isOpen, columns).map((row, at) => (
           <Box>
             <Text wrap="truncate-end">
               {row.map(seg => (

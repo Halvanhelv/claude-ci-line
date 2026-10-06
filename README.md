@@ -41,11 +41,16 @@ Needs the `gh` CLI, signed in, and a GitHub remote.
 
 ## Refresh
 
-- every 15 seconds while a run is queued or running, every 2 minutes otherwise
-- on the next tick after the branch or HEAD changes
+- every 15 seconds while a workflow is queued or running, and for 3 minutes after a commit or push while its runs have yet to appear
+- every 2 minutes otherwise
+- on the next tick after the branch, HEAD or the upstream ref changes
 - 5 seconds after a `git push` or a `gh pr|run|workflow` command run through Bash
 
-With no `gh`, no network or no runs the band stays empty.
+With no `gh`, no network or nothing reported on the commit the band stays empty; a failed read keeps the last line.
+
+## Not shown
+
+Review state, checks a branch protection requires that never reported, and runs on other branches (a deploy after merge).
 
 ## Develop
 

@@ -44,13 +44,17 @@ const rail = (rails: number[], width: number) =>
 
 // First row: the line of checkpoints, one per workflow. Under it, right to left,
 // each open workflow hangs its jobs from its own checkpoint.
-export const layout = (ci: Ci, isExpanded: boolean): Seg[][] => {
+// A line wider than the band drops the names of its green checkpoints, so the ones
+// that need a look are never the part cut off.
+export const layout = (ci: Ci, isExpanded: boolean, columns = Infinity): Seg[][] => {
   const line: Seg[] = [
     { text: 'CI ', tone: 'dim' },
     { text: ci.sha.slice(0, 7), tone: 'plain' },
     { text: ci.isHead ? '  ' : ' ≠HEAD  ', tone: 'dim' },
   ]
   let column = line.reduce((sum, seg) => sum + seg.text.length, 0)
+  const full = ci.runs.reduce((sum, run) => sum + 2 + run.name.length, column + 4 * (ci.runs.length - 1))
+  const label = (run: Run) => (full > columns && isQuiet(run.state) ? '' : ` ${run.name}`)
   const open: { column: number; run: Run }[] = []
 
   ci.runs.forEach((run, at) => {
@@ -63,9 +67,9 @@ export const layout = (ci: Ci, isExpanded: boolean): Seg[][] => {
     }
     line.push(
       { text: GLYPH[run.state], tone: run.state },
-      { text: ` ${run.name}`, tone: isQuiet(run.state) ? 'dim' : 'plain' },
+      { text: label(run), tone: isQuiet(run.state) ? 'dim' : 'plain' },
     )
-    column += 2 + run.name.length
+    column += 1 + label(run).length
   })
 
   const rows = [line]

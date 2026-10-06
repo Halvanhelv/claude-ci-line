@@ -83,3 +83,10 @@ test('a pending commit status is a waiting checkpoint after the workflows', () =
   expect(text(ci)).toEqual(['CI d258227  ● Gate ── ● Validate ── ○ browser-verification'])
   expect(statusState('error')).toBe('fail')
 })
+
+test('a line wider than the band keeps only the names that need a look', () => {
+  const ci: Ci = { ...green, runs: [...green.runs, { id: 0, name: 'browser-verification', state: 'wait', jobs: [] }] }
+  const rows = layout(ci, false, 40).map(row => row.map(seg => seg.text).join(''))
+
+  expect(rows).toEqual(['CI d258227  ● ── ● ── ○ browser-verification'])
+})
