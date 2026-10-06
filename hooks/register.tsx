@@ -167,7 +167,7 @@ export const register: Register = on => {
 
     const isOpen = await read($, isExpanded)
     const { Box, Button, Text } = $.ui.resolve(e)
-    const columns = (e.props.bodyColumns ?? e.viewport?.columns ?? 200) - 3
+    const columns = (e.props.bodyColumns ?? e.viewport?.columns ?? 200) - 7
 
     return (
       <Box flexDirection="column">
@@ -188,6 +188,7 @@ export const register: Register = on => {
                 onPress={() => update($, isExpanded, was => !was)}
               />
             )}
+            {at === 0 && e.viewport?.isFullscreen !== true && <Text dimColor> /ci</Text>}
           </Box>
         ))}
       </Box>
