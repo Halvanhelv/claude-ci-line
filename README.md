@@ -25,6 +25,8 @@ CI d258227 ≠HEAD  ● Gate ── ● Code Review ── ✗ Validate ▾
 | `⊘` | cancelled |
 | `◌` | skipped |
 
+Commit statuses and check runs from outside Actions follow the workflows as checkpoints of their own.
+
 `≠HEAD` means the local HEAD is not the commit CI ran on (not pushed yet).
 
 `/ci`, or the `▸` button, opens every workflow with every job named, and closes it again. `/ci` also refreshes at once.

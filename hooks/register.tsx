@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Ci, Job, Run } from '../types'
-import { layout, toState } from './layout'
+import { layout, statusState, toState } from './layout'
 import type { Tone } from './layout'
 
 const TICK_MS = 15_000
@@ -20,6 +20,8 @@ type GhRun = {
   createdAt: string
 }
 type GhJob = { name: string; status: string; conclusion: string | null }
+type GhCheck = GhJob & { app: { slug: string } | null }
+type GhStatus = { context: string; state: string }
 
 const COLOR: Partial<Record<Tone, string>> = { ok: 'success', fail: 'error', run: 'warning' }
 const DIM: Tone[] = ['wait', 'skip', 'stop', 'dim']
@@ -48,6 +50,20 @@ const jobsOf = async ($: EngineInterface, run: GhRun): Promise<Job[]> => {
   return jobs
 }
 
+// What reports on the commit outside Actions: other apps' check runs and commit statuses.
+const outsideOf = async ($: EngineInterface, sha: string): Promise<Run[]> => {
+  const [checks, combined] = await Promise.all([
+    gh<{ check_runs: GhCheck[] }>($, ['api', `repos/{owner}/{repo}/commits/${sha}/check-runs?per_page=100`]),
+    gh<{ statuses: GhStatus[] }>($, ['api', `repos/{owner}/{repo}/commits/${sha}/status?per_page=100`]),
+  ])
+  const foreign = (checks?.check_runs ?? []).filter(check => check.app?.slug !== 'github-actions')
+
+  return [
+    ...foreign.map(check => ({ id: 0, name: check.name, state: toState(check.status, check.conclusion), jobs: [] })),
+    ...(combined?.statuses ?? []).map(one => ({ id: 0, name: one.context, state: statusState(one.state), jobs: [] })),
+  ]
+}
+
 const load = async ($: EngineInterface, head: string, branch: string): Promise<Ci | null> => {
   const all = await gh<GhRun[]>($, [
     'run', 'list', '--branch', branch, '--limit', '20',
@@ -62,16 +78,17 @@ const load = async ($: EngineInterface, head: string, branch: string): Promise<C
     if (run.headSha === sha && !latest.has(run.workflowName)) latest.set(run.workflowName, run)
   }
   const picked = [...latest.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-  const runs: Run[] = await Promise.all(
-    picked.map(async run => ({
+  const [outside, ...runs] = await Promise.all([
+    outsideOf($, sha),
+    ...picked.map(async run => ({
       id: run.databaseId,
       name: run.workflowName.replace(/^\d+\.\s*/, ''),
       state: toState(run.status, run.conclusion),
       jobs: await jobsOf($, run),
     })),
-  )
+  ])
 
-  return { sha, isHead: sha === head, runs }
+  return { sha, isHead: sha === head, runs: [...runs, ...outside] }
 }
 
 const refresh = async ($: EngineInterface, isForced = false) => {
@@ -88,7 +105,7 @@ const refresh = async ($: EngineInterface, isForced = false) => {
     const next = key === '' ? null : await load($, head, branch)
     lastKey = key
     fetchedAt = now
-    isActive = next?.runs.some(run => run.state === 'run' || run.state === 'wait') ?? false
+    isActive = next?.runs.some(run => run.id !== 0 && (run.state === 'run' || run.state === 'wait')) ?? false
 
     const json = JSON.stringify(next)
     if (json !== lastJson) {

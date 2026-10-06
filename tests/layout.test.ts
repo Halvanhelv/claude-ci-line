@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { layout, toState } from '../hooks/layout'
+import { layout, statusState, toState } from '../hooks/layout'
 import type { Ci } from '../types'
 
 const text = (ci: Ci, isExpanded = false) =>
@@ -75,4 +75,11 @@ test('run states map from the GitHub status and conclusion', () => {
   expect(toState('completed', 'success')).toBe('ok')
   expect(toState('completed', 'cancelled')).toBe('stop')
   expect(toState('completed', 'timed_out')).toBe('fail')
+})
+
+test('a pending commit status is a waiting checkpoint after the workflows', () => {
+  const ci: Ci = { ...green, runs: [...green.runs, { id: 0, name: 'browser-verification', state: statusState('pending'), jobs: [] }] }
+
+  expect(text(ci)).toEqual(['CI d258227  ● Gate ── ● Validate ── ○ browser-verification'])
+  expect(statusState('error')).toBe('fail')
 })

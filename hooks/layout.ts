@@ -23,6 +23,9 @@ export const toState = (status: string, conclusion: string | null): State => {
   return 'fail'
 }
 
+export const statusState = (state: string): State =>
+  state === 'success' ? 'ok' : state === 'pending' ? 'wait' : 'fail'
+
 // "lint / rubocop" -> group "lint", job "rubocop"; a job with no slash has no group.
 const groupJobs = (jobs: Job[]): [string, Job[]][] => {
   const groups = new Map<string, Job[]>()
