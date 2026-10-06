@@ -29,7 +29,7 @@ Commit statuses and check runs from outside Actions follow the workflows as chec
 
 `≠HEAD` means the local HEAD is not the commit CI ran on (not pushed yet).
 
-`/ci`, or the `▸` button, opens every workflow with every job named, and closes it again. `/ci` also refreshes at once.
+`/ci`, or the `▸` button, opens every workflow with every job named, and closes it again. `/ci` also refreshes at once. Where the terminal does not pass clicks on (outside fullscreen), the line ends with the hint `/ci to expand`.
 
 ## Install
 
