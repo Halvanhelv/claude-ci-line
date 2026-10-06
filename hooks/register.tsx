@@ -23,8 +23,8 @@ type GhJob = { name: string; status: string; conclusion: string | null }
 type GhCheck = GhJob & { app: { slug: string } | null }
 type GhStatus = { context: string; state: string }
 
-const COLOR: Partial<Record<Tone, string>> = { ok: 'success', fail: 'error', run: 'warning' }
-const DIM: Tone[] = ['wait', 'skip', 'stop', 'dim']
+const COLOR: Partial<Record<Tone, string>> = { ok: 'success', fail: 'error', run: 'warning', wait: 'warning' }
+const DIM: Tone[] = ['skip', 'stop', 'dim']
 
 let isFetching = false
 let isActive = false
