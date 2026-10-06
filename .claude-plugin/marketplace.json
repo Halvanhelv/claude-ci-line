@@ -1,0 +1,5 @@
+{
+  "name": "claude-ci-line",
+  "owner": { "name": "Halvanhelv" },
+  "plugins": [{ "name": "ci-line", "source": "./" }]
+}

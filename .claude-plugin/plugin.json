@@ -1,0 +1,7 @@
+{
+  "name": "ci-line",
+  "version": "0.1.0",
+  "description": "CI state of the current branch above the prompt: a line of checkpoints, branching into jobs when something runs or fails",
+  "author": { "name": "Halvanhelv" },
+  "types": "./types/index.d.ts"
+}
